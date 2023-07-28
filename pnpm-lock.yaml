@@ -3148,7 +3148,7 @@ packages:
     resolution: {integrity: sha512-kopW4ZEKX2mgaPi9jh3lTP+2ixbe0z+tAEOn3v0ZM6jzQl7z+2C1ZZjU1cVYbX+RDGqu7n6BMyv5wmWuqiuKYQ==}
     engines: {node: '>=14'}
     dependencies:
-      '@opentelemetry/api': 1.4.0
+      '@opentelemetry/api': 1.4.1
       tslib: 2.4.1
     dev: false
 

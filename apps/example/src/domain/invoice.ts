@@ -33,57 +33,51 @@ export type InvoiceState = {
   payments: Set<string>
   amount_paid: number
 }
-export type State =
-  | { type: "Initial" }
-  | { type: "Raised"; state: InvoiceState }
-  | { type: "Finalized"; state: InvoiceState }
-export const initial: State = { type: "Initial" }
 
-function evolveInitial(event: Event): State {
-  if (event.type !== "InvoiceRaised") throw new Error("Unexpected " + event.type)
-  return {
-    type: "Raised",
-    state: {
+class InitialState {
+  evolve(event: Event): State {
+    if (event.type !== "InvoiceRaised") throw new Error("Unexpected " + event.type)
+    return new RaisedState({
       amount: event.data.amount,
       payer_id: event.data.payer_id,
       amount_paid: 0,
       payments: new Set(),
-    },
+    })
   }
 }
 
-function evolveRaised(state: InvoiceState, event: Event): State {
-  switch (event.type) {
-    case "InvoiceRaised":
-      throw new Error("Unexpected " + event.type)
-    case "PaymentReceived":
-      return {
-        type: "Raised",
-        state: {
-          ...state,
-          payments: new Set([...state.payments, event.data.reference]),
-          amount_paid: state.amount_paid + event.data.amount,
-        },
-      }
+class RaisedState {
+  constructor(public state: InvoiceState) {}
 
-    case "InvoiceFinalized":
-      return { type: "Finalized", state }
+  evolve(event: Event): State {
+    switch (event.type) {
+      case "InvoiceRaised":
+        throw new Error("Unexpected " + event.type)
+      case "PaymentReceived":
+        new RaisedState({
+          ...this.state,
+          payments: new Set([...this.state.payments, event.data.reference]),
+          amount_paid: this.state.amount_paid + event.data.amount,
+        })
+      case "InvoiceFinalized":
+        return new FinalizedState(this.state)
+    }
   }
 }
 
-function evolveFinalized(event: Event): State {
-  throw new Error("Unexpected " + event.type)
+class FinalizedState {
+  constructor(public state: InvoiceState) {}
+
+  evolve(event: Event): State {
+    throw new Error("Unexpected " + event.type)
+  }
 }
+
+export type State = InitialState | RaisedState | FinalizedState
+export const initial: State = new InitialState()
 
 export function evolve(state: State, event: Event): State {
-  switch (state.type) {
-    case "Initial":
-      return evolveInitial(event)
-    case "Raised":
-      return evolveRaised(state.state, event)
-    case "Finalized":
-      return evolveFinalized(event)
-  }
+  return state.evolve(event)
 }
 
 export const fold = reduce(evolve)
@@ -93,40 +87,24 @@ export const fold = reduce(evolve)
 export const raiseInvoice =
   (data: InvoiceRaised) =>
   (state: State): Event[] => {
-    switch (state.type) {
-      case "Initial":
-        return [{ type: "InvoiceRaised", data }]
-      case "Raised":
-        if (state.state.amount === data.amount && state.state.payer_id === data.payer_id) return []
-        throw new Error("Invoice is already raised")
-      case "Finalized":
-        throw new Error("invoice is finalized")
-    }
+    if (state instanceof FinalizedState) throw new Error("Invoice is finalized")
+    if (state instanceof RaisedState) throw new Error("Invoice is already raised")
+    return [{ type: "InvoiceRaised", data }]
   }
 
 export const recordPayment =
   (data: Payment) =>
   (state: State): Event[] => {
-    switch (state.type) {
-      case "Initial":
-        throw new Error("Invoice not found")
-      case "Finalized":
-        throw new Error("Invoice is finalized")
-      case "Raised":
-        if (state.state.payments.has(data.reference)) return []
-        return [{ type: "PaymentReceived", data }]
-    }
+    if (state instanceof FinalizedState) throw new Error("Invoice is finalized")
+    if (state instanceof InitialState) throw new Error("Invoice not found")
+    if (state.state.payments.has(data.reference)) return []
+    return [{ type: "PaymentReceived", data }]
   }
 
 export const finalize = (state: State): Event[] => {
-  switch (state.type) {
-    case "Initial":
-      throw new Error("Invoice not found")
-    case "Finalized":
-      return []
-    case "Raised":
-      return [{ type: "InvoiceFinalized" }]
-  }
+  if (state instanceof FinalizedState) return []
+  if (state instanceof InitialState) throw new Error("Invoice not found")
+  return [{ type: "InvoiceFinalized" }]
 }
 
 // Queries
@@ -137,16 +115,11 @@ export type Model = {
 }
 
 export const summary = (state: State): Model | null => {
-  switch (state.type) {
-    case "Initial":
-      return null
-    case "Raised":
-    case "Finalized":
-      return {
-        amount: state.state.amount,
-        payer_id: PayerId.toString(state.state.payer_id),
-        finalized: state.type === "Finalized",
-      }
+  if (state instanceof InitialState) return null
+  return {
+    amount: state.state.amount,
+    payer_id: PayerId.toString(state.state.payer_id),
+    finalized: state instanceof FinalizedState,
   }
 }
 
